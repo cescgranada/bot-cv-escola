@@ -1,21 +1,31 @@
-name: Bot de Currículums
+name: Bot Classificador de CVs
 on:
   schedule:
-    - cron: '0 * * * *' # S'executa cada hora en punt
-  workflow_dispatch:      # Permet executar-lo a mà per provar
+    # 0 -> minut 0
+    # 7 -> hora 7 (en format UTC)
+    # * -> qualsevol dia del mes
+    # * -> qualsevol mes
+    # 1 -> dilluns (Monday)
+    - cron: '0 7 * * 1'  
+  workflow_dispatch:       # Això et permet seguir executant-lo a mà quan vulguis provar-ho
 
 jobs:
-  build:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Descarregar codi
+        uses: actions/checkout@v4
+
       - name: Configurar Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
+
       - name: Instal·lar llibreries
-        run: pip install -r requirements.txt
-      - name: Executar Bot
+        run: |
+          pip install -r requirements.txt
+
+      - name: Executar Script
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: python main.py
