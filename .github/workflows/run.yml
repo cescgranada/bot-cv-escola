@@ -1,0 +1,21 @@
+name: Bot de Currículums
+on:
+  schedule:
+    - cron: '0 * * * *' # S'executa cada hora en punt
+  workflow_dispatch:      # Permet executar-lo a mà per provar
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Instal·lar llibreries
+        run: pip install -r requirements.txt
+      - name: Executar Bot
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: python main.py
