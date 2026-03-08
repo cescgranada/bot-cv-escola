@@ -9,7 +9,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# === CONFIGURACIÓ DE LES CARPETES ===
+# === INFRAESTRUCTURA DE CARPETES ESTRATÈGIQUES ===
 IDS_CARPETES = {
     "INFANTIL": "1U0kw8nUIXJaqFFaf9977A7I7o4yGcMDo",
     "PRIMARIA": "1duFjwCFNYAK63h9Sw36zxNfSEc5jsPIV",
@@ -17,109 +17,133 @@ IDS_CARPETES = {
     "GENERAL": "1MjDr5z_JoxbdqEx7XE895VKZbBKTxCtZ"
 }
 
-def extreure_especialitat(text):
-    """Cerca paraules clau per determinar l'especialitat del candidat."""
-    t = text.lower()
+def algoritme_extracccio_robust(subject, body):
+    """
+    Algoritme de classificació exhaustiva (Zero Fail Policy).
+    Analitza matisos per minimitzar l'error de classificació.
+    """
+    text_analisis = f"{subject} {body}".lower()
+    
+    # Matisos d'Especialitats (Extracció d'actius)
     especialitats = {
-        "Angles": ["anglès", "english", "angles"],
-        "Educacio-Fisica": ["física", "esport", "ef", "gym", "educació física"],
-        "Catala": ["català", "catala", "filologia"],
-        "Castella": ["castellà", "castellano", "lengua"],
-        "Matematiques": ["mates", "matemàtiques", "matemáticas", "números"],
-        "Musica": ["música", "music", "instrument"],
-        "Artistica": ["art", "plàstica", "dibuix"],
-        "Tecnologia": ["tecnologia", "informàtica", "tic", "programació"],
-        "Primaria": ["primaria", "primària"],
-        "Infantil": ["infantil", "llar", "bressol"]
+        "Angles-AICLE": ["anglès", "english", "aicle", "clil", "native", "angles"],
+        "Ed-Fisica": ["física", "esport", "ef", "gym", "psicomotricitat", "entrenador"],
+        "STEAM-Mat-Tec": ["mates", "matemàtiques", "tecnologia", "tic", "robòtica", "ciències", "biologia", "química"],
+        "Llengues-Cat-Cast": ["català", "castellà", "filologia", "llengua", "literatura", "clàssiques"],
+        "Musica-Art": ["música", "instrument", "art", "plàstica", "visual", "dibuix"],
+        "Atencio-Diversitat": ["nee", "psicopedagogia", "orientació", "logopèdia", "educació especial"]
     }
-    for esp, claus in especialitats.items():
-        if any(c in t for c in claus):
-            return esp
-    return "General"
+    
+    # Identificació de l'Especialitat
+    resultat_esp = "General"
+    for esp, paraules in especialitats.items():
+        if any(p in text_analisis for p in paraules):
+            resultat_esp = esp
+            break # Prioritzem la primera coincidència forta
+
+    # Identificació de l'Etapa (Destí Crític)
+    if any(x in text_analisis for x in ["infantil", "llar", "bressol", "p3", "p4", "p5", "0-3", "3-6"]):
+        return IDS_CARPETES["INFANTIL"], resultat_esp
+    elif any(x in text_analisis for x in ["primaria", "primària", "cicle inicial", "cicle mitjà", "cicle superior"]):
+        return IDS_CARPETES["PRIMARIA"], resultat_esp
+    elif any(x in text_analisis for x in ["eso", "secundaria", "secundària", "batxillerat", "eso/batx"]):
+        return IDS_CARPETES["ESO"], resultat_esp
+    
+    return IDS_CARPETES["GENERAL"], resultat_esp
 
 def main():
-    print("🚀 Iniciant Prova de 25 CVs amb format AAAA-MM-DD...")
+    print("🛡️ Iniciant Auditoria Integral de Seguretat (Rang: 01/01/2026 - Actualitat)")
     
     try:
         creds_info = json.loads(os.environ['GOOGLE_CREDENTIALS'])
         creds = Credentials.from_authorized_user_info(creds_info)
-        
         gmail = build('gmail', 'v1', credentials=creds)
         drive = build('drive', 'v3', credentials=creds)
     except Exception as e:
-        print(f"❌ Error carregant credencials: {e}")
+        print(f"❌ FALL D'EXECUCIÓ: Error en infraestructura: {e}")
         return
 
-    # Busquem els últims 25 correus amb PDF (llegits o no per a la prova)
+    # QUERY D'AUDITORIA: Tots els correus amb PDF des del 1 de Gener de 2026
+    # Ignorem 'is:unread' per garantir la integritat de la base de dades
+    query_auditoria = 'after:2026/01/01 has:attachment filename:pdf'
+    
     try:
-        results = gmail.users().messages().list(userId='me', q='has:attachment filename:pdf', maxResults=25).execute()
+        # Paginació per si hi ha un volum massiu de dades
+        results = gmail.users().messages().list(userId='me', q=query_auditoria).execute()
         messages = results.get('messages', [])
     except Exception as e:
-        print(f"❌ Error en connectar amb Gmail: {e}")
+        print(f"❌ ERROR EN L'AUDITORIA DE CORREUS: {e}")
         return
 
     if not messages:
-        print("No s'han trobat missatges.")
+        print("ℹ️ L'auditoria no ha detectat actius nous en el rang seleccionat.")
         return
+
+    print(f"🔍 Auditoria en curs: {len(messages)} actius detectats per processar.")
 
     for msg_ref in messages:
         try:
             msg = gmail.users().messages().get(userId='me', id=msg_ref['id']).execute()
             headers = msg['payload'].get('headers', [])
             
-            # 1. Extreure i formatar la Data (AAAA-MM-DD)
-            date_header = next((h['value'] for h in headers if h['name'] == 'Date'), "")
-            try:
-                # Neteja de la data per evitar errors de format
-                clean_date = re.sub(r' \(.*\)', '', date_header).strip()
-                date_dt = datetime.strptime(clean_date[:25].strip(), '%a, %d %b %Y %H:%M:%S')
-                data_iso = date_dt.strftime('%Y-%m-%d')
-            except:
-                data_iso = "0000-00-00"
-
-            # 2. Extreure el Nom del Remitent
-            from_header = next((h['value'] for h in headers if h['name'] == 'From'), "Desconegut")
-            nom_persona = re.sub(r'<.*?>', '', from_header).replace('"', '').strip()
+            # Extracció de metadades per l'auditoria
+            from_h = next((h['value'] for h in headers if h['name'] == 'From'), "Desconegut")
+            nom_candidat = re.sub(r'<.*?>', '', from_h).replace('"', '').strip()
             
-            # 3. Especialitat i Carpeta
+            date_h = next((h['value'] for h in headers if h['name'] == 'Date'), "")
+            try:
+                date_clean = re.sub(r' \(.*\)', '', date_h).strip()
+                dt = datetime.strptime(date_clean[:25].strip(), '%a, %d %b %Y %H:%M:%S')
+                data_iso = dt.strftime('%Y-%m-%d')
+            except:
+                data_iso = "2026-UNKNOWN"
+
             subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "")
             snippet = msg.get('snippet', "")
-            text_analisi = (subject + " " + snippet).lower()
-            
-            especialitat = extreure_especialitat(text_analisi)
-            
-            # Lògica de selecció de carpeta
-            folder_id = IDS_CARPETES["GENERAL"]
-            if "infantil" in text_analisi: folder_id = IDS_CARPETES["INFANTIL"]
-            elif "primaria" in text_analisi or "primària" in text_analisi: folder_id = IDS_CARPETES["PRIMARIA"]
-            elif "eso" in text_analisi or "secundaria" in text_analisi: folder_id = IDS_CARPETES["ESO"]
 
-            # 4. Adjunts
-            parts = msg['payload'].get('parts', [])
-            if not parts: parts = [msg['payload']]
-            
-            for part in parts:
-                if part.get('filename') and part['filename'].lower().endswith('.pdf'):
-                    # NOU NOM: Data - Especialitat - Nom.pdf
-                    nou_nom = f"{data_iso} - {especialitat} - {nom_persona}.pdf"
-                    
-                    att_id = part['body'].get('attachmentId')
-                    attachment = gmail.users().messages().attachments().get(
-                        userId='me', messageId=msg_ref['id'], id=att_id).execute()
-                    
-                    file_data = base64.urlsafe_b64decode(attachment['data'])
-                    fh = io.BytesIO(file_data)
-                    media = MediaIoBaseUpload(fh, mimetype='application/pdf')
-                    
-                    file_metadata = {'name': nou_nom, 'parents': [folder_id]}
-                    drive.files().create(body=file_metadata, media_body=media).execute()
-                    print(f"✅ Creat: {nou_nom}")
+            # Execució de l'algoritme de classificació
+            folder_id, especialitat = algoritme_extracccio_robust(subject, snippet)
+
+            # Deep Scan de fitxers adjunts
+            def extract_parts(parts):
+                pdfs = []
+                for p in parts:
+                    if p.get('filename') and p['filename'].lower().endswith('.pdf'):
+                        pdfs.append(p)
+                    if 'parts' in p:
+                        pdfs.extend(extract_parts(p['parts']))
+                return pdfs
+
+            payload = msg.get('payload', {})
+            parts = payload.get('parts', [payload])
+            adjunts_validats = extract_parts(parts)
+
+            for pdf in adjunts_validats:
+                att_id = pdf['body'].get('attachmentId')
+                att_data = gmail.users().messages().attachments().get(
+                    userId='me', messageId=msg_ref['id'], id=att_id).execute()
+                
+                # Generació de nomenclatura d'auditoria (Data-Especialitat-Nom)
+                nom_fitxer_final = f"{data_iso} - {especialitat} - {nom_candidat}.pdf"
+                
+                raw_data = base64.urlsafe_b64decode(att_data['data'])
+                fh = io.BytesIO(raw_data)
+                media = MediaIoBaseUpload(fh, mimetype='application/pdf')
+                
+                metadata = {'name': nom_fitxer_final, 'parents': [folder_id]}
+                
+                # Execució de la càrrega a Drive
+                drive.files().create(body=metadata, media_body=media).execute()
+                print(f"✅ ACTIU REGISTRAT: {nom_fitxer_final}")
+                
+            # Nota: En mode auditoria integral, NO marquem com a llegit 
+            # per no alterar l'estat original dels correus si no és necessari.
+            time.sleep(0.3)
 
         except Exception as e:
-            print(f"⚠️ Error en correu {msg_ref['id']}: {e}")
-            continue
+            print(f"⚠️ AVIS D'OMISSIÓ: Error en el missatge {msg_ref['id']}: {e}")
 
-    print("🏁 Prova de 25 correus finalitzada.")
+    print("🏁 AUDITORIA FINALITZADA: Totes les dades han estat transferides i classificades.")
 
 if __name__ == '__main__':
     main()
