@@ -2,7 +2,7 @@ name: Bot de CVs Nou Patufet - Execució Setmanal
 
 on:
   schedule:
-    # S'executa cada dilluns a les 07:00 UTC (08:00 AM hora local)
+    # S'executa cada dilluns a les 07:00 UTC (08:00 AM hora local a l'hivern)
     # Minut 0, Hora 7, Dia del mes *, Mes *, Dia de la setmana 1 (Dilluns)
     - cron: '0 7 * * 1'
   
@@ -15,20 +15,20 @@ jobs:
     
     steps:
       - name: 1. Descarregar el codi del repositori
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Actualitzat a v4 per màxima estabilitat
 
       - name: 2. Configurar l'entorn de Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # Actualitzat a v5
         with:
-          python-version: '3.10'
+          python-version: '3.12' # Pugem a la versió recomanada actual de Python
 
       - name: 3. Instal·lar les llibreries de Google API
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
 
       - name: 4. Executar el Bot de CVs
         env:
-          # Aquest secret ha de contenir el JSON que vas treure del Colab
+          # Aquest secret ha de contenir el JSON del Colab
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: python main.py
