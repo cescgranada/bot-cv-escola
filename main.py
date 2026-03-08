@@ -40,15 +40,23 @@ def extreure_especialitat(text):
 def main():
     print("🚀 Iniciant Prova de 25 CVs amb format AAAA-MM-DD...")
     
-    creds_info = json.loads(os.environ['GOOGLE_CREDENTIALS'])
-    creds = Credentials.from_authorized_user_info(creds_info)
-    
-    gmail = build('gmail', 'v1', credentials=creds)
-    drive = build('drive', 'v3', credentials=creds)
+    try:
+        creds_info = json.loads(os.environ['GOOGLE_CREDENTIALS'])
+        creds = Credentials.from_authorized_user_info(creds_info)
+        
+        gmail = build('gmail', 'v1', credentials=creds)
+        drive = build('drive', 'v3', credentials=creds)
+    except Exception as e:
+        print(f"❌ Error carregant credencials: {e}")
+        return
 
-    # Busquem els últims 25 correus amb PDF
-    results = gmail.users().messages().list(userId='me', q='has:attachment filename:pdf', maxResults=25).execute()
-    messages = results.get('messages', [])
+    # Busquem els últims 25 correus amb PDF (llegits o no per a la prova)
+    try:
+        results = gmail.users().messages().list(userId='me', q='has:attachment filename:pdf', maxResults=25).execute()
+        messages = results.get('messages', [])
+    except Exception as e:
+        print(f"❌ Error en connectar amb Gmail: {e}")
+        return
 
     if not messages:
         print("No s'han trobat missatges.")
@@ -62,7 +70,7 @@ def main():
             # 1. Extreure i formatar la Data (AAAA-MM-DD)
             date_header = next((h['value'] for h in headers if h['name'] == 'Date'), "")
             try:
-                # Intentem netejar la data per al parsing
+                # Neteja de la data per evitar errors de format
                 clean_date = re.sub(r' \(.*\)', '', date_header).strip()
                 date_dt = datetime.strptime(clean_date[:25].strip(), '%a, %d %b %Y %H:%M:%S')
                 data_iso = date_dt.strftime('%Y-%m-%d')
@@ -80,6 +88,7 @@ def main():
             
             especialitat = extreure_especialitat(text_analisi)
             
+            # Lògica de selecció de carpeta
             folder_id = IDS_CARPETES["GENERAL"]
             if "infantil" in text_analisi: folder_id = IDS_CARPETES["INFANTIL"]
             elif "primaria" in text_analisi or "primària" in text_analisi: folder_id = IDS_CARPETES["PRIMARIA"]
@@ -91,7 +100,7 @@ def main():
             
             for part in parts:
                 if part.get('filename') and part['filename'].lower().endswith('.pdf'):
-                    # NOU FORMAT: AAAA-MM-DD - Especialitat - Nom.pdf
+                    # NOU NOM: Data - Especialitat - Nom.pdf
                     nou_nom = f"{data_iso} - {especialitat} - {nom_persona}.pdf"
                     
                     att_id = part['body'].get('attachmentId')
@@ -104,3 +113,13 @@ def main():
                     
                     file_metadata = {'name': nou_nom, 'parents': [folder_id]}
                     drive.files().create(body=file_metadata, media_body=media).execute()
+                    print(f"✅ Creat: {nou_nom}")
+
+        except Exception as e:
+            print(f"⚠️ Error en correu {msg_ref['id']}: {e}")
+            continue
+
+    print("🏁 Prova de 25 correus finalitzada.")
+
+if __name__ == '__main__':
+    main()
