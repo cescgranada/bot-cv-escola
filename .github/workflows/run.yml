@@ -1,31 +1,34 @@
-name: Bot Classificador de CVs
+name: Bot de CVs Nou Patufet - Execució Setmanal
+
 on:
   schedule:
-    # 0 -> minut 0
-    # 7 -> hora 7 (en format UTC)
-    # * -> qualsevol dia del mes
-    # * -> qualsevol mes
-    # 1 -> dilluns (Monday)
-    - cron: '0 7 * * 1'  
-  workflow_dispatch:       # Això et permet seguir executant-lo a mà quan vulguis provar-ho
+    # S'executa cada dilluns a les 07:00 UTC (08:00 AM hora local)
+    # Minut 0, Hora 7, Dia del mes *, Mes *, Dia de la setmana 1 (Dilluns)
+    - cron: '0 7 * * 1'
+  
+  # Permet l'execució manual des de la pestanya 'Actions' de GitHub
+  workflow_dispatch:
 
 jobs:
-  run-bot:
+  processar-cvs:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Descarregar codi
-        uses: actions/checkout@v4
+      - name: 1. Descarregar el codi del repositori
+        uses: actions/checkout@v3
 
-      - name: Configurar Python
-        uses: actions/setup-python@v5
+      - name: 2. Configurar l'entorn de Python
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
-      - name: Instal·lar llibreries
+      - name: 3. Instal·lar les llibreries de Google API
         run: |
-          pip install -r requirements.txt
+          pip install --upgrade pip
+          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
 
-      - name: Executar Script
+      - name: 4. Executar el Bot de CVs
         env:
+          # Aquest secret ha de contenir el JSON que vas treure del Colab
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: python main.py
