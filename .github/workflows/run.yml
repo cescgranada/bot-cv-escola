@@ -15,20 +15,22 @@ jobs:
     
     steps:
       - name: 1. Descarregar el codi del repositori
-        uses: actions/checkout@v4 # Actualitzat a v4 per màxima estabilitat
+        uses: actions/checkout@v4
 
       - name: 2. Configurar l'entorn de Python
-        uses: actions/setup-python@v5 # Actualitzat a v5
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12' # Pugem a la versió recomanada actual de Python
+          python-version: '3.12'
 
-      - name: 3. Instal·lar les llibreries de Google API
+      - name: 3. Instal·lar les llibreries (Inclou IA i PDF)
         run: |
           python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 pymupdf google-generativeai
 
       - name: 4. Executar el Bot de CVs
         env:
-          # Aquest secret ha de contenir el JSON del Colab
+          # Aquest secret conté el JSON del compte de Google
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          # AQUESTA ÉS LA NOVA CLAU NECESSÀRIA PER A LA IA
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
