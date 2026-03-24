@@ -2,16 +2,21 @@ import os
 import json
 import base64
 import io
-import time
 import re
+import time
+import fitz  # PyMuPDF per a extracció de text d'alta precisió
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from email.mime.text import MIMEText
+from google import genai
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# === CONFIGURACIÓ ===
+# === 1. CONFIGURACIÓ DE SEGURETAT I PIFS ===
+API_KEY = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=API_KEY)
+
 IDS_CARPETES = {
     "INFANTIL": "1U0kw8nUIXJaqFFaf9977A7I7o4yGcMDo",
     "PRIMARIA": "1duFjwCFNYAK63h9Sw36zxNfSEc5jsPIV",
@@ -20,22 +25,85 @@ IDS_CARPETES = {
 }
 DESTINATARIS_RESUM = ["francesc.granada@noupatufet.coop", "ingrid.ribelles@noupatufet.coop"]
 
-def extreure_especialitat(text):
-    t = text.lower()
-    especialitats = {
-        "Angles": ["anglès", "english", "aicle", "angles"],
-        "Ed-Fisica": ["física", "esport", "ef", "gym", "educació física"],
-        "Catala-Castella": ["català", "castellà", "llengua", "filologia"],
-        "STEAM": ["mates", "tecnologia", "robòtica", "ciències", "biologia"],
-        "Musica-Art": ["música", "art", "plàstica"],
-        "Atencio-Diversitat": ["nee", "psicopedagogia", "orientació", "logopèdia"]
-    }
-    for esp, claus in especialitats.items():
-        if any(c in t for c in claus): return esp
-    return "General"
+# === 2. EL PROMPT DE MISSIÓ CRÍTICA (CHAIN OF THOUGHT) ===
+PROMPT_CV_PATUFET = """
+Ets un expert en Recursos Humans i Gestió Escolar de l'Escola Nou Patufet. La teva missió és analitzar el text següent extret d'un CV i classificar-lo amb precisió absoluta.
+
+CONTEXT DE L'ESCOLA:
+Som una cooperativa d'ensenyament que cobreix des de l'etapa Infantil (I3) fins a 4t d'ESO.
+
+TEXT DEL CV A ANALITZAR:
+{text_cv}
+
+CRITERIS DE CLASSIFICACIÓ (JERARQUIA DE DECISIÓ):
+- INFANTIL: Mestres amb grau en Educació Infantil o Tècnics en Educació Infantil (TEI). Mencions en P3, P4, P5 o Llar d'infants.
+- PRIMARIA: Mestres amb grau en Educació Primària. Mencions: Angles, Música, EF, o Educació Especial (SIEI/PT).
+- ESO: Llicenciats o Graduats amb el Màster de Formació del Professorat (CAP). Especialitats: Ciències, Filologia, Matemàtiques, Tecnologia, Socials, etc.
+- GENERAL: Perfils no docents (Administració, Cuina, Manteniment, Vetlladors) o perfils on no es pugui determinar clarament l'etapa.
+
+REGLA DE ROBUSTESA D'ARXIVAMENT:
+- Si el candidat té titulació per a dues etapes (ex: Infantil i Primària), la teva resposta ha d'incloure AMBDÓS IDs de carpeta.
+- Si hi ha un dubte raonable sobre la titulació oficial per fer classe, classifica a GENERAL per a revisió manual.
+
+FORMAT DE SORTIDA (JSON PUR):
+{{
+  "nom_candidat": "Nom complet detectat",
+  "especialitat_principal": "Ex: Filologia Catalana / Mestre Primària",
+  "carpetes_id": ["ID_CARPETA_1", "ID_CARPETA_2"],
+  "justificacio_tecnica": "Breu explicació de per què s'ha classificat aquí",
+  "punts_forts": ["Punt 1", "Punt 2"],
+  "prioritat_contractacio": 1-5
+}}
+
+IDS PER UTILITZAR:
+- Infantil: {id_infantil}
+- Primaria: {id_primaria}
+- ESO: {id_eso}
+- General: {id_general}
+"""
+
+# === 3. UTILITATS TÈCNIQUES ===
+
+def extreure_text_pdf(pdf_bytes):
+    """Extreu text del PDF utilitzant PyMuPDF (Checklist 1)."""
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        return text.strip()
+    except Exception as e:
+        print(f"⚠️ Error llegint contingut PDF: {e}")
+        return ""
+
+def processar_cv_ia(text_cv):
+    """Analitza el CV amb Gemini Pro usant el prompt de missió crítica."""
+    # Filtre de seguretat (Checklist 2)
+    if len(text_cv) < 200:
+        return {
+            "nom_candidat": "Revisió Manual",
+            "especialitat_principal": "REVISIÓ_OCR_NECESSARI",
+            "carpetes_id": [IDS_CARPETES["GENERAL"]],
+            "justificacio_tecnica": "Text extret massa curt. Possiblement un PDF d'imatge."
+        }
+
+    prompt_final = PROMPT_CV_PATUFET.format(
+        text_cv=text_cv,
+        id_infantil=IDS_CARPETES["INFANTIL"],
+        id_primaria=IDS_CARPETES["PRIMARIA"],
+        id_eso=IDS_CARPETES["ESO"],
+        id_general=IDS_CARPETES["GENERAL"]
+    )
+    
+    try:
+        response = client.models.generate_content(model="gemini-1.5-pro", contents=prompt_final)
+        net = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(net)
+    except Exception as e:
+        print(f"❌ Error IA: {e}")
+        return None
 
 def extreure_pdfs_recursiu(parts):
-    """Busca PDFs en qualsevol nivell de profunditat del correu."""
     pdfs = []
     for part in parts:
         if part.get('filename') and part['filename'].lower().endswith('.pdf'):
@@ -49,33 +117,27 @@ def enviar_resum(gmail, llista_cvs):
         cos = "Hola,\n\nAquest dilluns no s'ha rebut cap currículum nou."
     else:
         fileres = "\n".join([f"- {cv}" for cv in llista_cvs])
-        cos = f"Hola,\n\nS'han processat correctament els següents currículums aquest matí:\n\n{fileres}\n\nJa estan disponibles a les carpetes corresponents del Drive."
+        cos = f"Hola,\n\nS'han processat els següents CVs amb classificació profunda per IA:\n\n{fileres}\n\nDisponibles al Drive."
     
-    # Afegim 'utf-8' per evitar problemes amb accents i caràcters especials
     msg = MIMEText(cos, 'plain', 'utf-8')
     msg['Subject'] = f"Resum Setmanal CVs - {datetime.now().strftime('%d/%m/%Y')}"
     msg['To'] = ", ".join(DESTINATARIS_RESUM)
-    
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     gmail.users().messages().send(userId='me', body={'raw': raw}).execute()
 
+# === 4. EXECUCIÓ PRINCIPAL ===
+
 def main():
-    print("🚀 Iniciant processament setmanal de CVs...")
+    print("🚀 Iniciant Super-Bot Nou Patufet (Analitzador Robust)...")
+    
     creds_info = json.loads(os.environ['GOOGLE_CREDENTIALS'])
     creds = Credentials.from_authorized_user_info(creds_info)
     gmail = build('gmail', 'v1', credentials=creds)
     drive = build('drive', 'v3', credentials=creds)
 
-    # Només correus NO LLEGITS amb PDF
     query = 'is:unread has:attachment filename:pdf'
-    
-    # Recollim TOTS els missatges (paginació)
-    messages = []
-    request = gmail.users().messages().list(userId='me', q=query)
-    while request is not None:
-        response = request.execute()
-        messages.extend(response.get('messages', []))
-        request = gmail.users().messages().list_next(previous_request=request, previous_response=response)
+    results = gmail.users().messages().list(userId='me', q=query).execute()
+    messages = results.get('messages', [])
     
     cvs_processats = []
 
@@ -84,56 +146,50 @@ def main():
             msg = gmail.users().messages().get(userId='me', id=msg_ref['id']).execute()
             headers = msg['payload'].get('headers', [])
             
-            # Metadata: Nom segur (sense caràcters estranys)
-            from_h = next((h['value'] for h in headers if h['name'] == 'From'), "Desconegut")
-            nom_candidat = re.sub(r'<.*?>', '', from_h).replace('"', '').strip()
-            nom_candidat = re.sub(r'[/\\?%*:|"<>]', '', nom_candidat) # Neteja per nom d'arxiu
-            
-            # Metadata: Data robusta
+            # Data robusta
             date_h = next((h['value'] for h in headers if h['name'] == 'Date'), "")
             try:
                 dt = parsedate_to_datetime(date_h)
                 data_iso = dt.strftime('%Y-%m-%d')
-            except: 
-                data_iso = datetime.now().strftime('%Y-%m-%d')
+            except: data_iso = datetime.now().strftime('%Y-%m-%d')
 
-            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "")
-            snippet = msg.get('snippet', "")
-            
-            # Classificació
-            text_full = (subject + " " + snippet).lower()
-            especialitat = extreure_especialitat(text_full)
-            
-            folder_id = IDS_CARPETES["GENERAL"]
-            if "infantil" in text_full: folder_id = IDS_CARPETES["INFANTIL"]
-            elif any(x in text_full for x in ["primaria", "primària"]): folder_id = IDS_CARPETES["PRIMARIA"]
-            elif any(x in text_full for x in ["eso", "secundaria"]): folder_id = IDS_CARPETES["ESO"]
-
-            # Processar Adjunts (Recursivament)
+            # Trobar PDFs recursivament
             parts = msg['payload'].get('parts', [msg['payload']])
             adjunts_pdf = extreure_pdfs_recursiu(parts)
             
             for part in adjunts_pdf:
-                nou_nom = f"{data_iso} - {especialitat} - {nom_candidat}.pdf"
-                
                 att_id = part['body'].get('attachmentId')
                 attachment = gmail.users().messages().attachments().get(
                     userId='me', messageId=msg_ref['id'], id=att_id).execute()
                 
-                media = MediaIoBaseUpload(io.BytesIO(base64.urlsafe_b64decode(attachment['data'])), mimetype='application/pdf')
-                drive.files().create(body={'name': nou_nom, 'parents': [folder_id]}, media_body=media).execute()
+                pdf_bytes = base64.urlsafe_b64decode(attachment['data'])
                 
-                cvs_processats.append(nou_nom)
-                print(f"✅ Processat: {nou_nom}")
+                # A. Extreure text real del PDF
+                text_cv = extreure_text_pdf(pdf_bytes)
+                
+                # B. Processar amb IA robusta
+                analisi = processar_cv_ia(text_cv)
+                
+                if analisi:
+                    nom_fitxer = f"{data_iso} - {analisi['especialitat_principal']} - {analisi['nom_candidat']}.pdf"
+                    
+                    # C. Arxivament consistent en Multi-carpeta (si cal)
+                    carpetes = analisi.get('carpetes_id', [IDS_CARPETES["GENERAL"]])
+                    for folder_id in carpetes:
+                        media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype='application/pdf')
+                        drive.files().create(body={'name': nom_fitxer, 'parents': [folder_id]}, media_body=media).execute()
+                    
+                    cvs_processats.append(f"{nom_fitxer} (Carpeta: {len(carpetes)})")
+                    print(f"✅ Processat i arxivat: {nom_fitxer}")
 
             # Marcar com a llegit
             gmail.users().messages().batchModify(userId='me', body={'ids': [msg_ref['id']], 'removeLabelIds': ['UNREAD']}).execute()
 
         except Exception as e:
-            print(f"⚠️ Error al correu {msg_ref['id']}: {e}")
+            print(f"⚠️ Error processant actiu: {e}")
 
     enviar_resum(gmail, cvs_processats)
-    print(f"🏁 Finalitzat. S'ha enviat el resum amb {len(cvs_processats)} CVs.")
+    print("🏁 Procés de CVs finalitzat.")
 
 if __name__ == '__main__':
     main()
