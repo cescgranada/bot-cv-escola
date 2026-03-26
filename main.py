@@ -27,7 +27,6 @@ IDS_CARPETES = {
 DESTINATARIS_RESUM = ["francesc.granada@noupatufet.coop", "ingrid.ribelles@noupatufet.coop"]
 
 # === 2. EL PROMPT DE MISSIÓ CRÍTICA ===
-# Nota: Fem servir doble clau {{ }} per al JSON perquè .format() no s'emboliqui
 PROMPT_CV_PATUFET = """
 Ets un expert en Recursos Humans i Gestió Escolar de l'Escola Nou Patufet. La teva missió és analitzar el text següent extret d'un CV i classificar-lo amb precisió absoluta.
 
@@ -86,7 +85,6 @@ def processar_cv_ia(text_cv):
             "justificacio_tecnica": "Text massa curt o imatge."
         }
 
-    # Assegurem que el format() estigui ben tancat
     prompt_final = PROMPT_CV_PATUFET.format(
         text_cv=text_cv,
         id_infantil=IDS_CARPETES["INFANTIL"],
@@ -149,11 +147,38 @@ def main():
             try:
                 dt = parsedate_to_datetime(date_h)
                 data_iso = dt.strftime('%Y-%m-%d')
-            except: data_iso = datetime.now().strftime('%Y-%m-%d')
+            except: 
+                data_iso = datetime.now().strftime('%Y-%m-%d')
 
             parts = msg['payload'].get('parts', [msg['payload']])
             adjunts_pdf = extreure_pdfs_recursiu(parts)
             
             for part in adjunts_pdf:
                 att_id = part['body'].get('attachmentId')
-                attachment = gmail.
+                attachment = gmail.users().messages().attachments().get(
+                    userId='me', messageId=msg_ref['id'], id=att_id).execute()
+                
+                pdf_bytes = base64.urlsafe_b64decode(attachment['data'])
+                text_cv = extreure_text_pdf(pdf_bytes)
+                analisi = processar_cv_ia(text_cv)
+                
+                if analisi:
+                    nom_fitxer = f"{data_iso} - {analisi['especialitat_principal']} - {analisi['nom_candidat']}.pdf"
+                    carpetes = analisi.get('carpetes_id', [IDS_CARPETES["GENERAL"]])
+                    for folder_id in carpetes:
+                        media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype='application/pdf')
+                        drive.files().create(body={'name': nom_fitxer, 'parents': [folder_id]}, media_body=media).execute()
+                    
+                    cvs_processats.append(f"{nom_fitxer}")
+                    print(f"✅ OK: {nom_fitxer}")
+
+            # Marcar com a llegit
+            gmail.users().messages().batchModify(userId='me', body={'ids': [msg_ref['id']], 'removeLabelIds': ['UNREAD']}).execute()
+
+        except Exception as e:
+            print(f"⚠️ Error en bucle principal: {e}")
+
+    enviar_resum(gmail, cvs_processats)
+
+if __name__ == '__main__':
+    main()
