@@ -2,11 +2,7 @@ name: Bot de CVs Nou Patufet - Execució Setmanal
 
 on:
   schedule:
-    # S'executa cada dilluns a les 07:00 UTC (08:00 AM hora local a l'hivern)
-    # Minut 0, Hora 7, Dia del mes *, Mes *, Dia de la setmana 1 (Dilluns)
     - cron: '0 7 * * 1'
-  
-  # Permet l'execució manual des de la pestanya 'Actions' de GitHub
   workflow_dispatch:
 
 jobs:
@@ -14,23 +10,21 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: 1. Descarregar el codi del repositori
+      - name: 1. Checkout codi
         uses: actions/checkout@v4
 
-      - name: 2. Configurar l'entorn de Python
+      - name: 2. Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: 3. Instal·lar les llibreries (Inclou IA i PDF)
+      - name: 3. Instal·lar llibreries
         run: |
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 pymupdf google-generativeai
 
-      - name: 4. Executar el Bot de CVs
+      - name: 4. Executar Bot
         env:
-          # Aquest secret conté el JSON del compte de Google
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          # AQUESTA ÉS LA NOVA CLAU NECESSÀRIA PER A LA IA
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
