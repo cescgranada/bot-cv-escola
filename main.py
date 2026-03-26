@@ -4,7 +4,7 @@ import base64
 import io
 import re
 import time
-import fitz  # PyMuPDF per a extracció de text d'alta precisió
+import fitz  # PyMuPDF
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from email.mime.text import MIMEText
@@ -27,6 +27,7 @@ IDS_CARPETES = {
 DESTINATARIS_RESUM = ["francesc.granada@noupatufet.coop", "ingrid.ribelles@noupatufet.coop"]
 
 # === 2. EL PROMPT DE MISSIÓ CRÍTICA ===
+# Nota: Fem servir doble clau {{ }} per al JSON perquè .format() no s'emboliqui
 PROMPT_CV_PATUFET = """
 Ets un expert en Recursos Humans i Gestió Escolar de l'Escola Nou Patufet. La teva missió és analitzar el text següent extret d'un CV i classificar-lo amb precisió absoluta.
 
@@ -82,9 +83,77 @@ def processar_cv_ia(text_cv):
             "nom_candidat": "Revisió Manual",
             "especialitat_principal": "REVISIÓ_OCR_NECESSARI",
             "carpetes_id": [IDS_CARPETES["GENERAL"]],
-            "justificacio_tecnica": "Text massa curt. Possible PDF d'imatge."
+            "justificacio_tecnica": "Text massa curt o imatge."
         }
 
+    # Assegurem que el format() estigui ben tancat
     prompt_final = PROMPT_CV_PATUFET.format(
         text_cv=text_cv,
         id_infantil=IDS_CARPETES["INFANTIL"],
+        id_primaria=IDS_CARPETES["PRIMARIA"],
+        id_eso=IDS_CARPETES["ESO"],
+        id_general=IDS_CARPETES["GENERAL"]
+    )
+    
+    try:
+        response = model.generate_content(prompt_final)
+        net = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(net)
+    except Exception as e:
+        print(f"❌ Error IA: {e}")
+        return None
+
+def extreure_pdfs_recursiu(parts):
+    pdfs = []
+    for part in parts:
+        if part.get('filename') and part['filename'].lower().endswith('.pdf'):
+            pdfs.append(part)
+        if 'parts' in part:
+            pdfs.extend(extreure_pdfs_recursiu(part['parts']))
+    return pdfs
+
+def enviar_resum(gmail, llista_cvs):
+    if not llista_cvs:
+        cos = "Hola,\n\nAquest dilluns no s'ha rebut cap currículum nou."
+    else:
+        fileres = "\n".join([f"- {cv}" for cv in llista_cvs])
+        cos = f"Hola,\n\nS'han processat els següents CVs amb IA profunda:\n\n{fileres}\n\nJa al Drive."
+    
+    msg = MIMEText(cos, 'plain', 'utf-8')
+    msg['Subject'] = f"Resum Setmanal CVs - {datetime.now().strftime('%d/%m/%Y')}"
+    msg['To'] = ", ".join(DESTINATARIS_RESUM)
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    gmail.users().messages().send(userId='me', body={'raw': raw}).execute()
+
+# === 4. EXECUCIÓ ===
+
+def main():
+    print("🚀 Iniciant Super-Bot Nou Patufet...")
+    creds_info = json.loads(os.environ['GOOGLE_CREDENTIALS'])
+    creds = Credentials.from_authorized_user_info(creds_info)
+    gmail = build('gmail', 'v1', credentials=creds)
+    drive = build('drive', 'v3', credentials=creds)
+
+    query = 'is:unread has:attachment filename:pdf'
+    results = gmail.users().messages().list(userId='me', q=query).execute()
+    messages = results.get('messages', [])
+    
+    cvs_processats = []
+
+    for msg_ref in messages:
+        try:
+            msg = gmail.users().messages().get(userId='me', id=msg_ref['id']).execute()
+            headers = msg['payload'].get('headers', [])
+            
+            date_h = next((h['value'] for h in headers if h['name'] == 'Date'), "")
+            try:
+                dt = parsedate_to_datetime(date_h)
+                data_iso = dt.strftime('%Y-%m-%d')
+            except: data_iso = datetime.now().strftime('%Y-%m-%d')
+
+            parts = msg['payload'].get('parts', [msg['payload']])
+            adjunts_pdf = extreure_pdfs_recursiu(parts)
+            
+            for part in adjunts_pdf:
+                att_id = part['body'].get('attachmentId')
+                attachment = gmail.
